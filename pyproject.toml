@@ -1,0 +1,58 @@
+[project]
+name = "text-detect-parse"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Ryan Hausen", email = "ryan.hausen@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pymupdf>=1.28.2",
+    "python-docx>=1.2.0",
+]
+
+[project.scripts]
+text-detect-parse = "text_detect_parse.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["docx", "docx.*", "pymupdf"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["text_detect_parse.parser", "text_detect_parse.openai"]
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=text_detect_parse --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+branch = true
