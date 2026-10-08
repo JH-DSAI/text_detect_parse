@@ -137,6 +137,19 @@ def test_docx_multiple_images_in_order(tmp_path: Path) -> None:
     assert kinds(parse(p)) == ["text", "image", "text", "image"]
 
 
+def test_docx_inline_image_splits_paragraph_text(tmp_path: Path) -> None:
+    d = docx.Document()
+    para = d.add_paragraph("before ")
+    para.add_run().add_picture(io.BytesIO(PNG))
+    para.add_run(" after")
+    p = tmp_path / "inline.docx"
+    d.save(str(p))
+    doc = parse(p)
+    assert kinds(doc) == ["text", "image", "text"]
+    assert [b.text for b in texts(doc)] == ["before", "after"]
+    assert [b.text for b in texts(parse(p, parse_images=False))] == ["before  after"]
+
+
 def test_docx_corrupt(tmp_path: Path) -> None:
     p = tmp_path / "bad.docx"
     p.write_bytes(b"not a zip")

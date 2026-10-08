@@ -114,4 +114,4 @@ class Document:
 
 
 def _cell(value: str) -> str:
-    return " ".join(value.split()).replace("|", "\\|")
+    return " ".join(value.split()).replace("\\", "\\\\").replace("|", "\\|")

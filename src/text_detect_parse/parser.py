@@ -52,6 +52,7 @@ def _parse_txt(path: Path, parse_images: bool, parse_tables: bool) -> list[Block
 def _parse_docx(path: Path, parse_images: bool, parse_tables: bool) -> list[Block]:
     import docx
     from docx.table import Table
+    from docx.text.hyperlink import Hyperlink
     from docx.text.paragraph import Paragraph
 
     doc = docx.Document(str(path))
@@ -63,18 +64,30 @@ def _parse_docx(path: Path, parse_images: bool, parse_tables: bool) -> list[Bloc
         tag = child.tag.rsplit("}", 1)[-1]
         if tag == "p":
             para = Paragraph(child, doc)
-            text = para.text.strip()
-            if text:
-                style = para.style.name if para.style is not None else ""
-                m = re.fullmatch(r"Heading (\d)", style or "")
-                level = min(int(m.group(1)), 6) if m else (1 if style == "Title" else 0)
-                blocks.append(TextBlock(text, level=level))
-            if parse_images:
-                for blip in child.iter(blip_embed):
-                    part = doc.part.related_parts.get(blip.get(embed_attr))
-                    if part is not None:
-                        ext = Path(part.partname).suffix.lstrip(".") or "png"
-                        blocks.append(ImageBlock(part.blob, ext=ext))
+            style = para.style.name if para.style is not None else ""
+            m = re.fullmatch(r"Heading (\d)", style or "")
+            level = min(int(m.group(1)), 6) if m else (1 if style == "Title" else 0)
+            pending: list[str] = []
+
+            def flush_text(level: int = level, pending: list[str] = pending) -> None:
+                text = "".join(pending).strip()
+                pending.clear()
+                if text:
+                    blocks.append(TextBlock(text, level=level))
+
+            # Walk runs in order so text after an inline image stays after it.
+            for item in para.iter_inner_content():
+                for run in item.runs if isinstance(item, Hyperlink) else [item]:
+                    pending.append(run.text)
+                    if not parse_images:
+                        continue
+                    for blip in run._r.iter(blip_embed):
+                        part = doc.part.related_parts.get(blip.get(embed_attr))
+                        if part is not None:
+                            flush_text()
+                            ext = Path(part.partname).suffix.lstrip(".") or "png"
+                            blocks.append(ImageBlock(part.blob, ext=ext))
+            flush_text()
         elif tag == "tbl" and parse_tables:
             table = Table(child, doc)
             rows = [_docx_row(row) for row in table.rows]

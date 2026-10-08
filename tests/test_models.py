@@ -32,6 +32,11 @@ def test_table_markdown_escapes_pipes_and_newlines() -> None:
     assert md.splitlines()[0] == "| a\\|b | x y |"
 
 
+def test_table_markdown_escapes_backslashes_before_pipes() -> None:
+    md = TableBlock([["a\\|b", "c\\d"], ["1", "2"]]).to_markdown()
+    assert md.splitlines()[0] == "| a\\\\\\|b | c\\\\d |"
+
+
 def test_empty_table_markdown() -> None:
     assert TableBlock([]).to_markdown() == ""
 

@@ -11,7 +11,7 @@ uv run text-detect-parse report.pdf --no-tables -f json   # skip tables, JSON ou
 uv run text-detect-parse report.pdf --image-dir imgs/ -o report.md
 ```
 
-Options: `-f {markdown,json,text}`, `-o FILE`, `--[no-]tables`, `--[no-]images`, `--image-dir DIR`, `--embed-images` (base64 in JSON).
+Options: `-f {markdown,json,text,openai}`, `-o FILE`, `--[no-]tables`, `--[no-]images`, `--image-dir DIR`, `--embed-images` (base64 in JSON).
 
 ## Library
 
