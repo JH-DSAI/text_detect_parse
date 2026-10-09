@@ -56,6 +56,13 @@ def test_image_markdown_and_dict(png_bytes: bytes) -> None:
     img.path = Path("x/y.png")
     assert img.to_markdown() == "![image](x/y.png)"
     assert img.to_dict()["path"] == "x/y.png"
+    img.path = Path("my dir/a (1).png")
+    assert img.to_markdown() == "![image](my%20dir/a%20%281%29.png)"
+
+
+def test_heading_newline_collapsed() -> None:
+    assert TextBlock("a\nb  c", level=2).to_markdown() == "## a b c"
+    assert TextBlock("a\nb").to_markdown() == "a\nb"
 
 
 def test_document_accessors(png_bytes: bytes) -> None:

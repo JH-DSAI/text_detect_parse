@@ -61,6 +61,15 @@ def test_txt_crlf_and_bom(tmp_path: Path) -> None:
     assert [b.text for b in texts(parse(p))] == ["one", "two"]
 
 
+def test_txt_bare_cr_and_utf16(tmp_path: Path) -> None:
+    p = tmp_path / "cr.txt"
+    p.write_bytes(b"one\r\rtwo")
+    assert [b.text for b in texts(parse(p))] == ["one", "two"]
+    u = tmp_path / "u16.txt"
+    u.write_text("caf\u00e9\n\nnew", encoding="utf-16")
+    assert [b.text for b in texts(parse(u))] == ["caf\u00e9", "new"]
+
+
 def test_txt_latin1_fallback(tmp_path: Path) -> None:
     p = tmp_path / "l.txt"
     p.write_bytes("caf\xe9".encode("latin-1"))
@@ -203,6 +212,59 @@ def test_docx_inline_image_splits_paragraph_text(tmp_path: Path) -> None:
     assert [b.text for b in texts(parse(p, parse_images=False))] == ["before  after"]
 
 
+def _docx_with_paragraph_xml(tmp_path: Path, inner: str) -> Path:
+    from docx.oxml import parse_xml
+
+    d = docx.Document()
+    para = d.add_paragraph()
+    rid, _ = d.part.get_or_add_image(io.BytesIO(PNG))
+    ns = (
+        'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+    )
+    for el in parse_xml(f"<w:p {ns}>{inner.replace('RID', rid)}</w:p>"):
+        para._p.append(el)
+    p = tmp_path / "x.docx"
+    d.save(str(p))
+    return p
+
+
+def test_docx_image_between_text_in_one_run(tmp_path: Path) -> None:
+    p = _docx_with_paragraph_xml(
+        tmp_path,
+        '<w:r><w:t>A</w:t><w:drawing><a:blip r:embed="RID"/></w:drawing><w:t>B</w:t></w:r>',
+    )
+    doc = parse(p)
+    assert kinds(doc) == ["text", "image", "text"]
+    assert [b.text for b in texts(doc)] == ["A", "B"]
+
+
+def test_docx_vml_image_and_alternate_content_not_duplicated(tmp_path: Path) -> None:
+    p = _docx_with_paragraph_xml(
+        tmp_path,
+        '<w:r><w:pict><v:shape><v:imagedata r:id="RID"/></v:shape></w:pict></w:r>'
+        "<w:r><mc:AlternateContent>"
+        '<mc:Choice><w:drawing><a:blip r:embed="RID"/></w:drawing></mc:Choice>'
+        '<mc:Fallback><w:pict><v:imagedata r:id="RID"/></w:pict></mc:Fallback>'
+        "</mc:AlternateContent></w:r>",
+    )
+    assert kinds(parse(p)) == ["image", "image"]
+    assert kinds(parse(p, parse_images=False)) == []
+
+
+def test_docx_inline_wrappers_text_kept(tmp_path: Path) -> None:
+    p = _docx_with_paragraph_xml(
+        tmp_path,
+        "<w:r><w:t>a </w:t></w:r>"
+        "<w:sdt><w:sdtContent><w:r><w:t>b </w:t></w:r></w:sdtContent></w:sdt>"
+        "<w:ins><w:r><w:t>c</w:t></w:r></w:ins>",
+    )
+    assert [b.text for b in texts(parse(p))] == ["a b c"]
+
+
 def test_docx_corrupt(tmp_path: Path) -> None:
     p = tmp_path / "bad.docx"
     p.write_bytes(b"not a zip")
@@ -272,6 +334,27 @@ def test_pdf_columns_stay_together(tmp_path: Path) -> None:
     assert [b.text for b in texts(parse(p))] == ["L1", "L2", "R1", "R2"]
 
 
+def test_pdf_table_placed_within_its_column(tmp_path: Path) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page()
+    # Content-stream order: left column first, then right column above the table.
+    page.insert_text((72, 100), "L1")
+    page.insert_text((72, 700), "L2")
+    page.insert_text((350, 100), "R1")
+    draw_table(page, 350, 200, rows=2, cols=2)
+    page.insert_text((350, 400), "R2")
+    p = tmp_path / "t.pdf"
+    doc.save(p)
+    out = parse(p)
+    assert [b.text if isinstance(b, TextBlock) else "T" for b in out.blocks] == [
+        "L1",
+        "L2",
+        "R1",
+        "T",
+        "R2",
+    ]
+
+
 def test_pdf_table_detection_failure_warns_and_continues(
     pdf_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -279,6 +362,7 @@ def test_pdf_table_detection_failure_warns_and_continues(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(pymupdf.Page, "find_tables", boom)
-    with pytest.warns(UserWarning, match="Table detection failed"):
+    with pytest.warns(UserWarning, match="Table detection failed") as rec:
         doc = parse(pdf_file, parse_tables=False)
+    assert rec[0].filename == __file__
     assert "Intro paragraph" in doc.text

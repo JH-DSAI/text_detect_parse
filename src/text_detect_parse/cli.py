@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.image_dir and args.images:
             doc.save_images(args.image_dir)
         return _emit(doc, args)
-    except OSError as e:
+    except (OSError, UnicodeEncodeError) as e:  # e.g. non-UTF-8 stdout
         print(f"error: {e}", file=sys.stderr)
         return 1
 

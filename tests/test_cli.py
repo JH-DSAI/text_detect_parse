@@ -115,3 +115,15 @@ def test_unwritable_image_dir_errors(
     blocker.write_text("x")
     code, _, err = run(capsys, str(docx_file), "--image-dir", str(blocker / "sub"))
     assert code == 1 and err.startswith("error:")
+
+
+def test_unencodable_stdout_errors(
+    txt_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+    import sys
+
+    txt_file.write_text("caf\u00e9")
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="ascii"))
+    assert main([str(txt_file)]) == 1
+    assert capsys.readouterr().err.startswith("error:")

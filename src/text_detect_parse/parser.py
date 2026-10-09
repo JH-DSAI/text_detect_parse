@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import re
 import warnings
 from collections.abc import Callable, Iterator
@@ -45,24 +46,25 @@ def parse(
 
 
 def _parse_txt(path: Path, parse_images: bool, parse_tables: bool) -> list[Block]:
-    try:
-        content = path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        content = path.read_text(encoding="latin-1")
-    paragraphs = re.split(r"\n\s*\n", content.replace("\r\n", "\n"))
+    data = path.read_bytes()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        content = data.decode("utf-16")
+    else:
+        try:
+            content = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            content = data.decode("latin-1")
+    paragraphs = re.split(r"\n\s*\n", content.replace("\r\n", "\n").replace("\r", "\n"))
     return [TextBlock(p.strip()) for p in paragraphs if p.strip()]
 
 
 def _parse_docx(path: Path, parse_images: bool, parse_tables: bool) -> list[Block]:
     import docx
     from docx.table import Table
-    from docx.text.hyperlink import Hyperlink
     from docx.text.paragraph import Paragraph
 
     doc = docx.Document(str(path))
     blocks: list[Block] = []
-    blip_embed = "{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
-    embed_attr = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
 
     for child in _iter_body(doc.element.body):
         tag = _local_name(child)
@@ -77,14 +79,13 @@ def _parse_docx(path: Path, parse_images: bool, parse_tables: bool) -> list[Bloc
                 if text:
                     blocks.append(TextBlock(text, level=level))
 
-            # Walk runs in order so text after an inline image stays after it.
-            for item in para.iter_inner_content():
-                for run in item.runs if isinstance(item, Hyperlink) else [item]:
-                    pending.append(run.text)
-                    if not parse_images:
-                        continue
-                    for blip in run._r.iter(blip_embed):
-                        part = doc.part.related_parts.get(blip.get(embed_attr))
+            # Walk run content in order so text after an inline image stays after it.
+            for run in _iter_runs(child):
+                for kind, value in _iter_run_content(run):
+                    if kind == "text":
+                        pending.append(value)
+                    elif parse_images:
+                        part = doc.part.related_parts.get(value)
                         if part is not None:
                             flush_text()
                             ext = Path(part.partname).suffix.lstrip(".") or "png"
@@ -110,6 +111,53 @@ def _iter_body(parent: _Element) -> Iterator[_Element]:
                     yield from _iter_body(content)
         elif tag in ("p", "tbl"):
             yield child
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+# Wrappers that hold runs inside a paragraph (hyperlinks, inline content controls, ...).
+_RUN_WRAPPERS = frozenset({"hyperlink", "sdt", "sdtContent", "ins", "smartTag", "fldSimple"})
+_IMAGE_REFS = {
+    "{http://schemas.openxmlformats.org/drawingml/2006/main}blip": _R + "embed",
+    "{urn:schemas-microsoft-com:vml}imagedata": _R + "id",
+}
+
+
+def _iter_runs(parent: _Element) -> Iterator[_Element]:
+    """Yield w:r elements of a paragraph in order, looking inside run wrappers."""
+    for child in parent.iterchildren():
+        tag = _local_name(child)
+        if tag == "r":
+            yield child
+        elif tag in _RUN_WRAPPERS:
+            yield from _iter_runs(child)
+
+
+def _iter_run_content(run: _Element) -> Iterator[tuple[str, str]]:
+    """Yield ("text", str) / ("image", rel id) for a run's content, in document order."""
+    for child in run.iterchildren():
+        tag = _local_name(child)
+        if tag == "t":
+            yield "text", child.text or ""
+        elif tag == "tab":
+            yield "text", "\t"
+        elif tag == "cr" or (tag == "br" and child.get(_W + "type") in (None, "textWrapping")):
+            yield "text", "\n"
+        elif tag == "noBreakHyphen":
+            yield "text", "-"
+        else:
+            for rid in _image_rids(child):
+                yield "image", rid
+
+
+def _image_rids(element: _Element) -> Iterator[str]:
+    """Relationship ids of pictures under `element`, skipping mc:Fallback duplicates."""
+    attr = _IMAGE_REFS.get(str(element.tag))
+    if attr and (rid := element.get(attr)):
+        yield rid
+    for child in element.iterchildren():
+        if _local_name(child) != "Fallback":
+            yield from _image_rids(child)
 
 
 def _heading_level(para: Paragraph) -> int:
@@ -169,33 +217,40 @@ def _parse_pdf(path: Path, parse_images: bool, parse_tables: bool) -> list[Block
             try:
                 tables = page.find_tables().tables
             except Exception as e:
-                warnings.warn(f"Table detection failed on page {page_no}: {e}", stacklevel=2)
+                warnings.warn(f"Table detection failed on page {page_no}: {e}", stacklevel=3)
                 tables = []
             table_boxes = [pymupdf.Rect(t.bbox) for t in tables]
 
-            # (y0, block) in PyMuPDF's native order, which follows the content stream
+            # (bbox, block) in PyMuPDF's native order, which follows the content stream
             # and so keeps columns together; sorting by position would interleave them.
-            found: list[tuple[float, Block]] = []
+            found: list[tuple[pymupdf.Rect, Block]] = []
             for b in page.get_text("dict", sort=False)["blocks"]:
                 box = pymupdf.Rect(b["bbox"])
                 if b["type"] == 1:
                     if parse_images:
                         img = ImageBlock(b["image"], ext=b.get("ext", "png"), page=page_no)
-                        found.append((box.y0, img))
+                        found.append((box, img))
                 elif not any(_mostly_inside(box, t) for t in table_boxes):
                     lines = ("".join(s["text"] for s in ln["spans"]) for ln in b["lines"])
                     text = "\n".join(ln for ln in lines if ln.strip()).strip()
                     if text:
-                        found.append((box.y0, TextBlock(text, page=page_no)))
+                        found.append((box, TextBlock(text, page=page_no)))
 
             if parse_tables:
-                # Tables go before the first block that starts at or below them.
+                # Tables go before the first block that starts at or below them, comparing
+                # only blocks in the table's own column span (the stream order is not
+                # sorted by y); with none below, after the last such block.
                 for t, box in sorted(
                     zip(tables, table_boxes, strict=True), key=lambda tb: tb[1].y0, reverse=True
                 ):
                     rows = [[c or "" for c in r] for r in t.extract()]
-                    at = next((i for i, (y, _) in enumerate(found) if y >= box.y0), len(found))
-                    found.insert(at, (box.y0, TableBlock(rows, page=page_no)))
+                    beside = [
+                        i for i, (b, _) in enumerate(found) if b.x0 < box.x1 and b.x1 > box.x0
+                    ]
+                    at = next((i for i in beside if found[i][0].y0 >= box.y0), None)
+                    if at is None:
+                        at = beside[-1] + 1 if beside else len(found)
+                    found.insert(at, (box, TableBlock(rows, page=page_no)))
 
             blocks += [blk for _, blk in found]
     return blocks

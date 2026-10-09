@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 
 @dataclass
@@ -17,7 +18,9 @@ class TextBlock:
     type: Literal["text"] = "text"
 
     def to_markdown(self, **_: Any) -> str:
-        return f"{'#' * self.level} {self.text}" if self.level else self.text
+        if not self.level:
+            return self.text
+        return f"{'#' * self.level} {' '.join(self.text.split())}"  # headings are one line
 
     def to_dict(self, **_: Any) -> dict[str, Any]:
         return {"type": self.type, "text": self.text, "level": self.level, "page": self.page}
@@ -55,7 +58,7 @@ class ImageBlock:
 
     def to_markdown(self, **_: Any) -> str:
         if self.path:
-            return f"![image]({self.path})"
+            return f"![image]({quote(self.path.as_posix())})"
         return f"[image: page {self.page}]" if self.page else "[image]"
 
     def to_dict(self, include_data: bool = False, **_: Any) -> dict[str, Any]:
