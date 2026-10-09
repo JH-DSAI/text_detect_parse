@@ -39,6 +39,7 @@ def test_table_markdown_escapes_backslashes_before_pipes() -> None:
 
 def test_empty_table_markdown() -> None:
     assert TableBlock([]).to_markdown() == ""
+    assert TableBlock([[]]).to_markdown() == ""
 
 
 def test_table_to_dict() -> None:
@@ -47,7 +48,8 @@ def test_table_to_dict() -> None:
 
 def test_image_markdown_and_dict(png_bytes: bytes) -> None:
     img = ImageBlock(png_bytes)
-    assert img.to_markdown() == "![image]()"
+    assert img.to_markdown() == "[image]"
+    assert ImageBlock(png_bytes, page=3).to_markdown() == "[image: page 3]"
     d = img.to_dict()
     assert d["size_bytes"] == len(png_bytes) and "data_base64" not in d
     assert img.to_dict(include_data=True)["data_base64"]

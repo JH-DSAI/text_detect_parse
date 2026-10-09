@@ -39,9 +39,10 @@ def test_unsupported_format_reencoded_to_png() -> None:
 
 def test_undecodable_image_skipped_with_warning() -> None:
     doc = Document(Path("d"), [TextBlock("a"), ImageBlock(b"garbage", ext="emf"), TextBlock("b")])
-    with pytest.warns(UserWarning, match="unsupported format"):
+    with pytest.warns(UserWarning, match="could not be converted") as rec:
         out = doc.to_openai_string()
     assert out == "a\n\nb\n"
+    assert rec[0].filename == __file__
 
 
 def test_empty_blocks_skipped() -> None:

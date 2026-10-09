@@ -64,10 +64,12 @@ Console script: `text-detect-parse = text_detect_parse.cli:main` (returns an int
   stays cheap. Type-only imports live under `TYPE_CHECKING`.
 - **PDF tables:** `page.find_tables()` runs even when `parse_tables=False`, because the table
   regions are needed to exclude their text. Text blocks overlapping a table bbox by >50% are dropped.
-  Blocks are sorted by `(y, x)` per page. Detection works best on ruled tables; there is no OCR.
+  Text/image blocks keep PyMuPDF's native (content-stream) order so columns stay together; tables are
+  inserted before the first block starting at or below them. Detection works best on ruled tables; there is no OCR.
 - **DOCX:** body children are walked in order, so tables and images land in the right position.
-  Heading levels come from style names (`Heading N`, `Title` -> 1; capped at 6). Merged cells are
-  de-duplicated by underlying `_tc`. Images inside table cells are not extracted.
+  Heading levels come from style names (`Heading N`, `Title` -> 1; capped at 6), following `base_style`. Merged cells are
+  de-duplicated by underlying `_tc` (horizontal: kept once; vertical: text in the first row, `""`
+  below). Body-level `w:sdt` content is unwrapped; nested table text is flattened into the cell. Images inside table cells are not extracted.
 - **TXT:** paragraphs split on blank lines; UTF-8 (BOM tolerated) with latin-1 fallback.
 - **OpenAI string:** images in formats other than png/jpeg/gif/webp are re-encoded to PNG via
   pymupdf, or skipped with a `UserWarning`. The result is plain text to the model, not a vision

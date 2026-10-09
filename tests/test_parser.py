@@ -126,6 +126,59 @@ def test_docx_merged_cells_not_duplicated(tmp_path: Path) -> None:
     assert parse(p).tables[0].rows == [["merged"], ["a", "b"]]
 
 
+def test_docx_vertical_merge_not_repeated(tmp_path: Path) -> None:
+    d = docx.Document()
+    t = d.add_table(rows=3, cols=2)
+    t.cell(0, 0).merge(t.cell(2, 0)).text = "tall"
+    for i in range(3):
+        t.cell(i, 1).text = str(i)
+    p = tmp_path / "v.docx"
+    d.save(str(p))
+    assert parse(p).tables[0].rows == [["tall", "0"], ["", "1"], ["", "2"]]
+
+
+def test_docx_nested_table_text_kept(tmp_path: Path) -> None:
+    d = docx.Document()
+    outer = d.add_table(rows=1, cols=1)
+    cell = outer.cell(0, 0)
+    cell.text = "outer"
+    inner = cell.add_table(rows=1, cols=2)
+    inner.cell(0, 0).text = "in1"
+    inner.cell(0, 1).text = "in2"
+    p = tmp_path / "n.docx"
+    d.save(str(p))
+    assert parse(p).tables[0].rows == [["outer\nin1 | in2"]]
+
+
+def test_docx_content_control_body_not_dropped(tmp_path: Path) -> None:
+    from docx.oxml import parse_xml
+
+    d = docx.Document()
+    para = d.add_paragraph("inside control")
+    xml = (
+        '<w:sdt xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:sdtContent/></w:sdt>"
+    )
+    sdt = parse_xml(xml)
+    para._p.addprevious(sdt)
+    sdt[0].append(para._p)
+    p = tmp_path / "s.docx"
+    d.save(str(p))
+    assert [b.text for b in texts(parse(p))] == ["inside control"]
+
+
+def test_docx_custom_style_based_on_heading(tmp_path: Path) -> None:
+    from docx.enum.style import WD_STYLE_TYPE
+
+    d = docx.Document()
+    style = d.styles.add_style("My Heading", WD_STYLE_TYPE.PARAGRAPH)
+    style.base_style = d.styles["Heading 2"]
+    d.add_paragraph("custom", style="My Heading")
+    p = tmp_path / "c.docx"
+    d.save(str(p))
+    assert [(b.text, b.level) for b in texts(parse(p))] == [("custom", 2)]
+
+
 def test_docx_multiple_images_in_order(tmp_path: Path) -> None:
     d = docx.Document()
     d.add_paragraph("before")
@@ -205,3 +258,27 @@ def test_pdf_corrupt(tmp_path: Path) -> None:
     p.write_bytes(b"not a pdf")
     with pytest.raises(Exception, match=r".+"):
         parse(p)
+
+
+def test_pdf_columns_stay_together(tmp_path: Path) -> None:
+    doc = pymupdf.open()
+    page = doc.new_page()
+    for y, label in [(100, "L1"), (300, "L2")]:
+        page.insert_text((72, y), label)
+    for y, label in [(101, "R1"), (301, "R2")]:
+        page.insert_text((350, y), label)
+    p = tmp_path / "cols.pdf"
+    doc.save(p)
+    assert [b.text for b in texts(parse(p))] == ["L1", "L2", "R1", "R2"]
+
+
+def test_pdf_table_detection_failure_warns_and_continues(
+    pdf_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(self: pymupdf.Page, *a: object, **k: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(pymupdf.Page, "find_tables", boom)
+    with pytest.warns(UserWarning, match="Table detection failed"):
+        doc = parse(pdf_file, parse_tables=False)
+    assert "Intro paragraph" in doc.text

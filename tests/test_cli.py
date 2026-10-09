@@ -15,7 +15,7 @@ def run(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str, str]:
 def test_markdown_default(docx_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     code, out, _ = run(capsys, str(docx_file))
     assert code == 0
-    assert "# Title here" in out and "| h1 | h2 |" in out and "![image]()" in out
+    assert "# Title here" in out and "| h1 | h2 |" in out and "[image]" in out
 
 
 def test_no_flags_json(docx_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -99,3 +99,19 @@ def test_invalid_format_exits(docx_file: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         main([str(docx_file), "-f", "xml"])
     assert exc.value.code == 2
+
+
+def test_unwritable_output_errors(
+    docx_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, err = run(capsys, str(docx_file), "-o", str(tmp_path / "missing" / "out.md"))
+    assert code == 1 and err.startswith("error:")
+
+
+def test_unwritable_image_dir_errors(
+    docx_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    code, _, err = run(capsys, str(docx_file), "--image-dir", str(blocker / "sub"))
+    assert code == 1 and err.startswith("error:")

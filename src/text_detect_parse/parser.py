@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+import warnings
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .models import Block, Document, ImageBlock, TableBlock, TextBlock
 
 if TYPE_CHECKING:
     import pymupdf
-    from docx.table import _Row
+    from docx.table import Table, _Cell
+    from docx.text.paragraph import Paragraph
+
+_Element = Any  # lxml ships no type stubs
 
 SUPPORTED_EXTENSIONS = (".txt", ".pdf", ".docx")
 
@@ -60,13 +64,11 @@ def _parse_docx(path: Path, parse_images: bool, parse_tables: bool) -> list[Bloc
     blip_embed = "{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
     embed_attr = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
 
-    for child in doc.element.body.iterchildren():
-        tag = child.tag.rsplit("}", 1)[-1]
+    for child in _iter_body(doc.element.body):
+        tag = _local_name(child)
         if tag == "p":
             para = Paragraph(child, doc)
-            style = para.style.name if para.style is not None else ""
-            m = re.fullmatch(r"Heading (\d)", style or "")
-            level = min(int(m.group(1)), 6) if m else (1 if style == "Title" else 0)
+            level = _heading_level(para)
             pending: list[str] = []
 
             def flush_text(level: int = level, pending: list[str] = pending) -> None:
@@ -90,20 +92,70 @@ def _parse_docx(path: Path, parse_images: bool, parse_tables: bool) -> list[Bloc
             flush_text()
         elif tag == "tbl" and parse_tables:
             table = Table(child, doc)
-            rows = [_docx_row(row) for row in table.rows]
-            blocks.append(TableBlock(rows))
+            blocks.append(TableBlock(_docx_rows(table)))
     return blocks
 
 
-def _docx_row(row: _Row) -> list[str]:
-    # Merged cells repeat the same underlying cell; keep each once.
-    seen: set[int] = set()
-    cells = []
-    for cell in row.cells:
-        if id(cell._tc) not in seen:
-            seen.add(id(cell._tc))
-            cells.append(cell.text.strip())
-    return cells
+def _local_name(element: _Element) -> str:
+    return str(element.tag).rsplit("}", 1)[-1]
+
+
+def _iter_body(parent: _Element) -> Iterator[_Element]:
+    """Yield paragraph/table elements in order, unwrapping content controls (w:sdt)."""
+    for child in parent.iterchildren():
+        tag = _local_name(child)
+        if tag == "sdt":
+            for content in child.iterchildren():
+                if _local_name(content) == "sdtContent":
+                    yield from _iter_body(content)
+        elif tag in ("p", "tbl"):
+            yield child
+
+
+def _heading_level(para: Paragraph) -> int:
+    # Walk base styles so custom styles derived from a heading are recognised.
+    style = para.style
+    while style is not None:
+        name = style.name or ""
+        if m := re.fullmatch(r"Heading (\d)", name):
+            return min(int(m.group(1)), 6)
+        if name == "Title":
+            return 1
+        style = style.base_style
+    return 0
+
+
+def _docx_rows(table: Table) -> list[list[str]]:
+    # A horizontally merged cell shows up several times in one row: keep it once.
+    # A vertically merged cell shows up in every row it spans: keep the text in the
+    # first row and leave "" below so columns stay aligned.
+    seen: set[_Element] = set()
+    rows = []
+    for row in table.rows:
+        in_row: set[_Element] = set()
+        cells = []
+        for cell in row.cells:
+            if cell._tc in in_row:
+                continue
+            in_row.add(cell._tc)
+            cells.append("" if cell._tc in seen else _docx_cell_text(cell))
+            seen.add(cell._tc)
+        rows.append(cells)
+    return rows
+
+
+def _docx_cell_text(cell: _Cell) -> str:
+    # cell.text ignores nested tables, so walk the cell body ourselves.
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    parts = []
+    for child in _iter_body(cell._tc):
+        if _local_name(child) == "p":
+            parts.append(Paragraph(child, cell).text)
+        else:
+            parts.extend(" | ".join(r) for r in _docx_rows(Table(child, cell)))
+    return "\n".join(parts).strip()
 
 
 def _parse_pdf(path: Path, parse_images: bool, parse_tables: bool) -> list[Block]:
@@ -112,36 +164,40 @@ def _parse_pdf(path: Path, parse_images: bool, parse_tables: bool) -> list[Block
     blocks: list[Block] = []
     with pymupdf.open(path) as pdf:
         for page_no, page in enumerate(pdf, 1):
-            # (y, x, block) so page content comes out in reading order.
-            found: list[tuple[float, float, Block]] = []
-
             # Always locate tables so their text is excluded from the text
             # blocks, even when table parsing is disabled.
-            tables = page.find_tables().tables
+            try:
+                tables = page.find_tables().tables
+            except Exception as e:
+                warnings.warn(f"Table detection failed on page {page_no}: {e}", stacklevel=2)
+                tables = []
             table_boxes = [pymupdf.Rect(t.bbox) for t in tables]
-            if parse_tables:
-                for t, box in zip(tables, table_boxes, strict=True):
-                    rows = [[c or "" for c in r] for r in t.extract()]
-                    found.append((box.y0, box.x0, TableBlock(rows, page=page_no)))
 
-            for b in page.get_text("dict")["blocks"]:
+            # (y0, block) in PyMuPDF's native order, which follows the content stream
+            # and so keeps columns together; sorting by position would interleave them.
+            found: list[tuple[float, Block]] = []
+            for b in page.get_text("dict", sort=False)["blocks"]:
                 box = pymupdf.Rect(b["bbox"])
                 if b["type"] == 1:
                     if parse_images:
-                        found.append(
-                            (
-                                box.y0,
-                                box.x0,
-                                ImageBlock(b["image"], ext=b.get("ext", "png"), page=page_no),
-                            )
-                        )
+                        img = ImageBlock(b["image"], ext=b.get("ext", "png"), page=page_no)
+                        found.append((box.y0, img))
                 elif not any(_mostly_inside(box, t) for t in table_boxes):
                     lines = ("".join(s["text"] for s in ln["spans"]) for ln in b["lines"])
                     text = "\n".join(ln for ln in lines if ln.strip()).strip()
                     if text:
-                        found.append((box.y0, box.x0, TextBlock(text, page=page_no)))
+                        found.append((box.y0, TextBlock(text, page=page_no)))
 
-            blocks += [blk for _, _, blk in sorted(found, key=lambda f: (f[0], f[1]))]
+            if parse_tables:
+                # Tables go before the first block that starts at or below them.
+                for t, box in sorted(
+                    zip(tables, table_boxes, strict=True), key=lambda tb: tb[1].y0, reverse=True
+                ):
+                    rows = [[c or "" for c in r] for r in t.extract()]
+                    at = next((i for i, (y, _) in enumerate(found) if y >= box.y0), len(found))
+                    found.insert(at, (box.y0, TableBlock(rows, page=page_no)))
+
+            blocks += [blk for _, blk in found]
     return blocks
 
 

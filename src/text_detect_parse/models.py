@@ -31,9 +31,9 @@ class TableBlock:
     type: Literal["table"] = "table"
 
     def to_markdown(self, **_: Any) -> str:
-        if not self.rows:
+        width = max((len(r) for r in self.rows), default=0)
+        if not width:
             return ""
-        width = max(len(r) for r in self.rows)
         rows = [[_cell(c) for c in r] + [""] * (width - len(r)) for r in self.rows]
         header, *body = rows
         lines = ["| " + " | ".join(header) + " |", "|" + " --- |" * width]
@@ -54,7 +54,9 @@ class ImageBlock:
     type: Literal["image"] = "image"
 
     def to_markdown(self, **_: Any) -> str:
-        return f"![image]({self.path})" if self.path else "![image]()"
+        if self.path:
+            return f"![image]({self.path})"
+        return f"[image: page {self.page}]" if self.page else "[image]"
 
     def to_dict(self, include_data: bool = False, **_: Any) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -87,6 +89,7 @@ class Document:
 
     @property
     def text(self) -> str:
+        """Text blocks only, joined by blank lines; tables and images are omitted."""
         return "\n\n".join(b.text for b in self.blocks if isinstance(b, TextBlock))
 
     def to_markdown(self) -> str:

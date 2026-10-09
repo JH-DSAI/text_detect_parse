@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+from .models import Document
 from .parser import SUPPORTED_EXTENSIONS, parse
 
 
@@ -24,8 +25,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["markdown", "json", "text", "openai"],
         default="markdown",
         help=(
-            "output format; openai emits one string with images inlined as data URLs "
-            "(default: markdown)"
+            "output format; text keeps text blocks only (no tables or images); openai emits "
+            "one string with images inlined as data URLs (default: markdown)"
         ),
     )
     p.add_argument("-o", "--output", type=Path, help="write output here instead of stdout")
@@ -61,9 +62,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: failed to parse {args.file}: {e}", file=sys.stderr)
         return 1
 
-    if args.image_dir and args.images:
-        doc.save_images(args.image_dir)
+    try:
+        if args.image_dir and args.images:
+            doc.save_images(args.image_dir)
+        return _emit(doc, args)
+    except OSError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
+
+def _emit(doc: Document, args: argparse.Namespace) -> int:
     if args.format == "json":
         out = json.dumps(doc.to_dict(include_image_data=args.embed_images), indent=2)
     elif args.format == "openai":

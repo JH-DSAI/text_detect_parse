@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import warnings
+from pathlib import Path
 
 from .models import Document, ImageBlock
 
@@ -24,8 +25,12 @@ def _image_url(img: ImageBlock) -> str | None:
             import pymupdf
 
             data, ext = pymupdf.Pixmap(data).tobytes("png"), "png"
-        except Exception:
-            warnings.warn(f"Skipping image with unsupported format {img.ext!r}", stacklevel=2)
+        except Exception as e:
+            warnings.warn(
+                f"Skipping {img.ext!r} image that could not be converted to PNG: {e}",
+                stacklevel=2,
+                skip_file_prefixes=(str(Path(__file__).parent),),  # blame the caller's code
+            )
             return None
     return f"data:{_MIME[ext]};base64,{base64.b64encode(data).decode('ascii')}"
 
