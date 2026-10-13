@@ -23,7 +23,7 @@ uv run mypy                   # strict type check of src/
 uv run text-detect-parse FILE # run the CLI
 uv add <pkg>                  # runtime dependency
 uv add --dev <pkg>            # dev dependency (note: --dev applies to ALL packages in the command)
-uv build                      # sdist + wheel into dist/ (backend: uv_build)
+uv build                      # sdist + wheel into dist/ (backend: hatchling + hatch-vcs)
 ```
 
 Before finishing any change, run the full gate that CI runs:
@@ -93,8 +93,10 @@ Console script: `text-detect-parse = text_detect_parse.cli:main` (returns an int
 
 - CI runs on pushes to `main` and PRs. For it to *block* merges, the checks `Lint, format & types`,
   `Tests (py3.12)`, `Tests (py3.13)` and `Build` must be marked required in branch protection.
-- Release: bump `version` in `pyproject.toml`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-  The workflow verifies the tag matches the version, builds, smoke-tests the wheel, publishes to PyPI
+- Versioning is dynamic (`hatchling` + `hatch-vcs`): the version comes from git tags, e.g. `0.1.1.dev3+gabc1234`
+  between tags. CI checkouts need `fetch-depth: 0`. `text_detect_parse.__version__` reads installed metadata.
+- Release: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+  The workflow builds, verifies the wheel version matches the tag, smoke-tests the wheel, publishes to PyPI
   via trusted publishing (environment `pypi`, no tokens), then creates a GitHub Release.
 - One-time PyPI setup (trusted publisher: workflow `release.yml`, environment `pypi`) is described
   in `README.md`.
@@ -103,3 +105,9 @@ Console script: `text-detect-parse = text_detect_parse.cli:main` (returns an int
 
 Work on a branch off `main`; do not commit directly to `main`. Do not commit `dist/`, `.venv/`, or
 generated files (they are gitignored).
+
+## When doing any kind of code review or any public posting
+
+Before performing any code review, read
+`.claude/REVIEW.md` and follow it. This applies to every review, including ones run through
+the `/code-review` skill or a background agent.

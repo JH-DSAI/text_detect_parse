@@ -1,6 +1,6 @@
 [project]
 name = "text-detect-parse"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Parse DOCX, PDF, and TXT documents into ordered blocks for LLM pipelines"
 readme = "README.md"
 authors = [
@@ -16,8 +16,17 @@ dependencies = [
 text-detect-parse = "text_detect_parse.cli:main"
 
 [build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
-build-backend = "uv_build"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/README.md", "/LICENSE", "/pyproject.toml"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/text_detect_parse"]
 
 [dependency-groups]
 dev = [

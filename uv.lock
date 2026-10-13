@@ -585,7 +585,6 @@ wheels = [
 
 [[package]]
 name = "text-detect-parse"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pymupdf" },

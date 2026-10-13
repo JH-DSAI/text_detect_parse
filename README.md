@@ -57,13 +57,13 @@ To make it blocking, mark the `Lint, format & types`, `Tests (py3.12)`, `Tests (
 
 ## Releasing
 
-Bump `version` in `pyproject.toml`, commit, then tag and push:
+The version is derived from git tags (`hatch-vcs`); there is no version to edit. Tag the commit and push:
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
-`.github/workflows/release.yml` re-runs CI, verifies the tag matches the package version, builds the sdist and wheel with `uv build`, smoke-tests the wheel, uploads them as a workflow artifact, publishes to PyPI via trusted publishing, and creates a GitHub Release with both files attached (only after PyPI succeeds).
+`.github/workflows/release.yml` re-runs CI, builds the sdist and wheel with `uv build`, verifies the wheel version matches the tag, smoke-tests the wheel, uploads them as a workflow artifact, publishes to PyPI via trusted publishing, and creates a GitHub Release with both files attached (only after PyPI succeeds).
 
 ### One-time PyPI setup
 
