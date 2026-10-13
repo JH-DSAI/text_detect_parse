@@ -106,7 +106,7 @@ Console script: `text-detect-parse = text_detect_parse.cli:main` (returns an int
 Work on a branch off `main`; do not commit directly to `main`. Do not commit `dist/`, `.venv/`, or
 generated files (they are gitignored).
 
-## When doing any kind of code review
+## When doing any kind of code review or any public posting
 
 Before performing any code review, read
 `.claude/REVIEW.md` and follow it. This applies to every review, including ones run through
