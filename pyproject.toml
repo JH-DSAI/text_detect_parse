@@ -21,7 +21,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
-raw-options = { fallback_version = "0.0.0" }
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/README.md", "/LICENSE", "/pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/text_detect_parse"]
