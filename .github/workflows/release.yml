@@ -23,11 +23,38 @@ jobs:
       - run: uv build
       - name: Check built version matches tag
         run: |
-          if ! ls dist/*.whl | grep -q -- "-${GITHUB_REF_NAME#v}-"; then
-            echo "Built wheel does not match tag ${GITHUB_REF_NAME}:" >&2
-            ls dist >&2
-            exit 1
-          fi
+          uv run --no-project --with packaging python - <<'EOF'
+          import email
+          import glob
+          import os
+          import sys
+          import tarfile
+          import zipfile
+
+          from packaging.version import Version
+
+          expected = Version(os.environ["GITHUB_REF_NAME"].removeprefix("v"))
+
+          (wheel,) = glob.glob("dist/*.whl")
+          (sdist,) = glob.glob("dist/*.tar.gz")
+
+          with zipfile.ZipFile(wheel) as zf:
+              name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+              wheel_version = email.message_from_bytes(zf.read(name))["Version"]
+
+          with tarfile.open(sdist) as tf:
+              name = next(n for n in tf.getnames() if n.count("/") == 1 and n.endswith("/PKG-INFO"))
+              sdist_version = email.message_from_bytes(tf.extractfile(name).read())["Version"]
+
+          bad = [
+              (path, v)
+              for path, v in ((wheel, wheel_version), (sdist, sdist_version))
+              if Version(v) != expected
+          ]
+          for path, v in bad:
+              print(f"{path} has version {v}, tag expects {expected}", file=sys.stderr)
+          sys.exit(1 if bad else 0)
+          EOF
       - name: Smoke-test the built wheel
         run: uv run --no-project --isolated --with dist/*.whl text-detect-parse --help
       - uses: actions/upload-artifact@v4
